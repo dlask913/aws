@@ -1,0 +1,189 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 백엔드와 DB용 프라이빗 네트워크 및 S3 Gateway,SSM Interface 엔드포인트 구성. NAT는 사용하지 않음.
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: ${AWS::StackName}-vpc
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Metadata:
+      Comment: CloudFront VPC Origin 연결을 위해 생성하며 서브넷의 인터넷 경로로는 사용하지 않음.
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: Vpc
+      InternetGatewayId:
+        Ref: InternetGateway
+  BackendPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ''
+      CidrBlock: 10.42.1.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: ${AWS::StackName}-backend-private
+  DatabasePrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: ''
+      CidrBlock: 10.42.11.0/24
+  DatabasePrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: Vpc
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: ''
+      CidrBlock: 10.42.12.0/24
+  BackendPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+  BackendSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: BackendPrivateRouteTable
+      SubnetId:
+        Ref: BackendPrivateSubnet
+  DatabasePrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: Vpc
+  DatabaseSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: DatabasePrivateRouteTable
+      SubnetId:
+        Ref: DatabasePrivateSubnetA
+  DatabaseSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: DatabasePrivateRouteTable
+      SubnetId:
+        Ref: DatabasePrivateSubnetB
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: Vpc
+      VpcEndpointType: Gateway
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.s3
+      RouteTableIds:
+        - Ref: BackendPrivateRouteTable
+    Metadata:
+      Comment: 기본 엔드포인트 정책을 사용하며 버킷 및 IAM 권한은 별도로 적용됨. AL2023 패키지 저장소도 S3를 사용하므로 배포 버킷만 허용하도록 제한하지 않음.
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      # 인바운드 접근은 허용하지 않으며 서버 관리와 배포는 SSM을 사용
+      GroupDescription: No inbound access. Admin and deployment through SSM.
+      VpcId:
+        Ref: Vpc
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      # 백엔드 보안 그룹에서 오는 MySQL 연결만 허용
+      GroupDescription: MySQL only from the backend security group
+      VpcId:
+        Ref: Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId:
+            Ref: BackendSecurityGroup
+  SsmEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      # 백엔드 보안 그룹에서 오는 HTTPS 연결만 허용
+      GroupDescription: HTTPS from backend only
+      VpcId:
+        Ref: Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId:
+            Ref: BackendSecurityGroup
+  SsmEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: Vpc
+      VpcEndpointType: Interface
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.ssm
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - Ref: BackendPrivateSubnet
+      SecurityGroupIds:
+        - Ref: SsmEndpointSecurityGroup
+  SsmMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId:
+        Ref: Vpc
+      VpcEndpointType: Interface
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.ssmmessages
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - Ref: BackendPrivateSubnet
+      SecurityGroupIds:
+        - Ref: SsmEndpointSecurityGroup
+Outputs:
+  VpcId:
+    Value:
+      Ref: Vpc
+  DatabasePrivateSubnetA:
+    Value:
+      Ref: DatabasePrivateSubnetA
+  DatabasePrivateSubnetB:
+    Value:
+      Ref: DatabasePrivateSubnetB
+  BackendSecurityGroup:
+    Value:
+      Ref: BackendSecurityGroup
+  DatabaseSecurityGroup:
+    Value:
+      Ref: DatabaseSecurityGroup
+  AvailabilityZone:
+    Value:
+      Fn::GetAtt:
+        - BackendPrivateSubnet
+        - AvailabilityZone
+  BackendPrivateSubnet:
+    Description: 백엔드 EC2와 SSM 엔드포인트를 배치할 프라이빗 서브넷
+    Value:
+      Ref: BackendPrivateSubnet
