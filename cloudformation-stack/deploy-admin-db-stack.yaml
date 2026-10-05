@@ -1,0 +1,106 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 삭제 가능한 학습용 MySQL 데이터베이스. 스택 삭제 또는 DB 교체 시 기존 데이터도 삭제됨.
+Parameters:
+  DatabaseInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    AllowedValues:
+      - db.t4g.micro
+      - db.t4g.small
+  DatabaseEngineVersion:
+    Type: String
+    Description: 서울 리전에서 지원하는 MySQL 8.4의 정확한 세부 버전. 배포 전에 describe-db-engine-versions로 확인.
+    AllowedPattern: 8\.4\.[0-9]+
+  DatabaseName:
+    Type: String
+    Default: noticeboard
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]{0,63}'
+  BackupRetentionDays:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    MaxValue: 7
+    Description: 자동 백업 보존 일수. 데이터 복구가 필요 없는 실습에만 0을 사용하며, 스택 삭제 시 자동 백업도 삭제됨.
+  DatabasePrivateSubnetA:
+    Type: AWS::EC2::Subnet::Id
+    Description: 네트워크 스택의 DatabasePrivateSubnetA 출력값으로 전달받는 DB용 프라이빗 서브넷 ID
+  DatabasePrivateSubnetB:
+    Type: AWS::EC2::Subnet::Id
+    Description: 네트워크 스택의 DatabasePrivateSubnetB 출력값으로 전달받는 다른 가용 영역의 DB용 프라이빗 서브넷 ID
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: 네트워크 스택의 DatabaseSecurityGroup 출력값으로 전달받는 DB 보안 그룹 ID
+  AvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Description: 네트워크 스택의 AvailabilityZone 출력값으로 전달받는 백엔드 서브넷과 동일한 가용 영역
+Resources:
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: 서로 다른 가용 영역의 프라이빗 서브넷 두 개를 등록하며, DB 인스턴스는 한 가용 영역에만 배치
+      SubnetIds:
+        - Ref: DatabasePrivateSubnetA
+        - Ref: DatabasePrivateSubnetB
+  DatabaseParameters:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: MySQL 8.4 접속 시 TLS 암호화 통신을 요구하는 파라미터 그룹
+      Family: mysql8.4
+      Parameters:
+        require_secure_transport: 'ON'
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Engine: mysql
+      EngineVersion:
+        Ref: DatabaseEngineVersion
+      EngineLifecycleSupport: open-source-rds-extended-support-disabled
+      DBInstanceClass:
+        Ref: DatabaseInstanceClass
+      DBName:
+        Ref: DatabaseName
+      MasterUsername: dbadmin
+      ManageMasterUserPassword: true
+      AllocatedStorage: '20'
+      StorageType: gp3
+      StorageEncrypted: true
+      MultiAZ: false
+      AvailabilityZone:
+        Ref: AvailabilityZone
+      PubliclyAccessible: false
+      DBSubnetGroupName:
+        Ref: DatabaseSubnetGroup
+      VPCSecurityGroups:
+        - Ref: DatabaseSecurityGroup
+      DBParameterGroupName:
+        Ref: DatabaseParameters
+      BackupRetentionPeriod:
+        Ref: BackupRetentionDays
+      PreferredBackupWindow: 18:00-18:30
+      PreferredMaintenanceWindow: sun:19:00-sun:19:30
+      AutoMinorVersionUpgrade: true
+      AllowMajorVersionUpgrade: false
+      DeletionProtection: false
+      DeleteAutomatedBackups: true
+      CopyTagsToSnapshot: true
+      MonitoringInterval: 0
+      EnablePerformanceInsights: false
+      Tags:
+        - Key: Purpose
+          Value: learning-disposable
+Outputs:
+  DatabaseEndpoint:
+    Value:
+      Fn::GetAtt: Database.Endpoint.Address
+  DatabasePort:
+    Value:
+      Fn::GetAtt: Database.Endpoint.Port
+  DatabaseName:
+    Value:
+      Ref: DatabaseName
+  DatabaseMasterSecretArn:
+    Description: 운영자의 초기 설정에 사용할 관리자 비밀번호 Secret ARN. 현재 GitHub 및 EC2 앱 역할에는 조회 권한을 부여하지 않음.
+    Value:
+      Fn::GetAtt: Database.MasterUserSecret.SecretArn
