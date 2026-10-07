@@ -1,0 +1,8 @@
+# Local-only inputs and raw evidence. This is not an access control mechanism.
+.env
+.env.*
+!.env.example
+raw/
+private/
+tmp/
+*.log
