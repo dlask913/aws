@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 삭제 가능한 학습용 MySQL 데이터베이스. 스택 삭제 또는 DB 교체 시 기존 데이터도 삭제됨.
+Description: 삭제 가능한 학습용 PostgreSQL 데이터베이스. 스택 삭제 또는 DB 교체 시 기존 데이터도 삭제됨.
 Parameters:
   DatabaseInstanceClass:
     Type: String
@@ -9,8 +9,8 @@ Parameters:
       - db.t4g.small
   DatabaseEngineVersion:
     Type: String
-    Description: 서울 리전에서 지원하는 MySQL 8.4의 정확한 세부 버전. 배포 전에 describe-db-engine-versions로 확인.
-    AllowedPattern: 8\.4\.[0-9]+
+    Description: 서울 리전에서 지원하는 PostgreSQL 17의 정확한 세부 버전. 배포 전에 describe-db-engine-versions로 확인.
+    AllowedPattern: 17\.[0-9]+
   DatabaseName:
     Type: String
     Default: noticeboard
@@ -44,16 +44,17 @@ Resources:
   DatabaseParameters:
     Type: AWS::RDS::DBParameterGroup
     Properties:
-      Description: MySQL 8.4 접속 시 TLS 암호화 통신을 요구하는 파라미터 그룹
-      Family: mysql8.4
+      Description: PostgreSQL 17 접속 시 TLS 암호화 통신을 요구하는 파라미터 그룹
+      Family: postgres17
       Parameters:
-        require_secure_transport: 'ON'
+        rds.force_ssl: '1'
   Database:
     Type: AWS::RDS::DBInstance
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
     Properties:
-      Engine: mysql
+      Engine: postgres
+      Port: 5432
       EngineVersion:
         Ref: DatabaseEngineVersion
       EngineLifecycleSupport: open-source-rds-extended-support-disabled
