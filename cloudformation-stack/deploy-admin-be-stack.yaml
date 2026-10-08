@@ -1,0 +1,238 @@
+# Deploy as its own stack. See split-stacks.ko.md.
+AWSTemplateFormatVersion: '2010-09-09'
+Description: EC2 and S3/SSM deployment permissions. Application and CloudFront integration configured separately.
+Parameters:
+  ExistingDeployRoleName:
+    Type: String
+    Default: GitHubActionsDeployRole
+    Description: Existing GitHub OIDC role. Its trust policy is not changed.
+    AllowedPattern: '[A-Za-z0-9+=,.@_-]+'
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues:
+      - t3.micro
+      - t3.small
+      - t3.medium
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: network output BackendSecurityGroup
+  DatabaseEndpoint:
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9.-]+'
+    Description: database output DatabaseEndpoint
+  DatabasePort:
+    Type: Number
+    Default: 5432
+    AllowedValues:
+      - 5432
+  DatabaseName:
+    Type: String
+    Default: noticeboard
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]{0,63}'
+  BackendPrivateSubnet:
+    Type: AWS::EC2::Subnet::Id
+    Description: network output BackendPrivateSubnet (private)
+Resources:
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireBuilds
+            Status: Enabled
+            Prefix: admin-backend/
+            ExpirationInDays: 7
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+  ArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: ArtifactBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - Fn::GetAtt: ArtifactBucket.Arn
+              - Fn::Sub: ${ArtifactBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ReadBackendBuilds
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource:
+                  Fn::Sub: ${ArtifactBucket.Arn}/admin-backend/*
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - Ref: InstanceRole
+  BackendInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId:
+        Ref: LatestAmiId
+      InstanceType:
+        Ref: InstanceType
+      IamInstanceProfile:
+        Ref: InstanceProfile
+      CreditSpecification:
+        CPUCredits: standard
+      MetadataOptions:
+        HttpTokens: required
+        HttpEndpoint: enabled
+        HttpPutResponseHopLimit: 1
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: false
+          SubnetId:
+            Ref: BackendPrivateSubnet
+          GroupSet:
+            - Ref: BackendSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 16
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value:
+            Fn::Sub: ${AWS::StackName}-backend
+      UserData:
+        Fn::Base64:
+          Fn::Sub: |
+            #!/bin/bash
+
+            set -euo pipefail
+            systemctl enable --now amazon-ssm-agent
+            # The regional AL2023 repository is hosted on S3 and reached via the gateway endpoint.
+            dnf --disablerepo='*' --enablerepo=amazonlinux install -y java-17-amazon-corretto-headless python3
+            command -v aws
+            java -version
+            id noticeboard >/dev/null 2>&1 || useradd --system --home-dir /var/lib/noticeboard-admin --shell /sbin/nologin noticeboard
+            install -d -m 0755 /opt/noticeboard-admin /opt/noticeboard-admin/releases
+            install -d -m 0750 -o root -g noticeboard /etc/noticeboard-admin
+            install -d -m 0750 -o noticeboard -g noticeboard /var/lib/noticeboard-admin
+            cat > /etc/noticeboard-admin/database.env <<'CONFIG'
+            SPRING_DATASOURCE_URL=jdbc:postgresql://${DatabaseEndpoint}:${DatabasePort}/${DatabaseName}?sslmode=require
+            SPRING_DATASOURCE_DRIVER_CLASS_NAME=org.postgresql.Driver
+            SERVER_PORT=8081
+            CONFIG
+            chmod 600 /etc/noticeboard-admin/database.env
+            cat > /etc/systemd/system/noticeboard-admin.service <<'UNIT'
+            [Unit]
+            Description=Noticeboard admin Spring Boot application
+            Wants=network-online.target
+            After=network-online.target
+            ConditionPathExists=/opt/noticeboard-admin/current.jar
+
+            [Service]
+            Type=simple
+            User=noticeboard
+            Group=noticeboard
+            WorkingDirectory=/var/lib/noticeboard-admin
+            EnvironmentFile=/etc/noticeboard-admin/database.env
+            EnvironmentFile=/etc/noticeboard-admin/app.env
+            ExecStart=/usr/bin/java -XX:MaxRAMPercentage=65 -jar /opt/noticeboard-admin/current.jar
+            Restart=on-failure
+            RestartSec=5
+            TimeoutStopSec=60
+            SuccessExitStatus=143
+            NoNewPrivileges=true
+            PrivateTmp=true
+            ProtectSystem=strict
+            ProtectHome=true
+            ReadWritePaths=/var/lib/noticeboard-admin
+            UMask=0027
+
+            [Install]
+            WantedBy=multi-user.target
+            UNIT
+            systemctl daemon-reload
+            systemctl enable noticeboard-admin.service
+            # app.env and a real readiness probe must be provisioned before the first deployment.
+            touch /opt/noticeboard-admin/bootstrap-complete
+    Metadata:
+      Comment: 'No cfn-signal: no CloudFormation endpoint. CREATE_COMPLETE is not bootstrap readiness; deployment checks cloud-init and bootstrap-complete.'
+  GitHubBackendPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName:
+        Fn::Sub: ${AWS::StackName}-backend-deploy
+      Roles:
+        - Ref: ExistingDeployRoleName
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: s3:PutObject
+            Resource:
+              Fn::Sub: ${ArtifactBucket.Arn}/admin-backend/*
+          - Effect: Allow
+            Action: ssm:SendCommand
+            Resource:
+              - Fn::Sub: arn:${AWS::Partition}:ssm:${AWS::Region}::document/AWS-RunShellScript
+              - Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${BackendInstance}
+          - Effect: Allow
+            Action: ssm:GetCommandInvocation
+            Resource: '*'
+Outputs:
+  EC2InstanceId:
+    Value:
+      Ref: BackendInstance
+  BackendArtifactBucket:
+    Value:
+      Ref: ArtifactBucket
+  InstanceRoleName:
+    Value:
+      Ref: InstanceRole
+  BackendInstanceArn:
+    Value:
+      Fn::Sub: arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${BackendInstance}
+  BackendPrivateDnsName:
+    Value:
+      Fn::GetAtt:
+        - BackendInstance
+        - PrivateDnsName
