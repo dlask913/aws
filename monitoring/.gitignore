@@ -6,3 +6,7 @@ raw/
 private/
 tmp/
 *.log
+__pycache__/
+*.pyc
+.venv/
+config.local.json

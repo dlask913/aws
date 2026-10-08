@@ -1,0 +1,141 @@
+name: AWS daily monitoring
+
+on:
+  push:
+    paths:
+      - 'monitoring/**'
+      - '.github/workflows/aws-daily-monitoring.yml'
+  workflow_dispatch:
+    inputs:
+      demo:
+        description: 'AWS 연결 없이 데모 보고서 생성'
+        type: boolean
+        default: true
+      report_date:
+        description: 'KST 보고 날짜 YYYY-MM-DD (빈 값은 어제)'
+        type: string
+        default: ''
+      publish:
+        description: '실제 조회한 공개 요약을 main에 커밋'
+        type: boolean
+        default: false
+  schedule:
+    # 예약 수집은 MONITORING_SCHEDULE_ENABLED=true 설정 후에만 실행.
+    - cron: '17 0 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aws-daily-monitoring
+  cancel-in-progress: false
+
+jobs:
+  test:
+    if: github.event_name != 'schedule' || vars.MONITORING_SCHEDULE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: 분석 및 공개 경계 테스트 (AWS 인증 불필요)
+        run: python -m unittest discover -s monitoring/tests -v
+
+  collect:
+    needs: test
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && vars.MONITORING_SCHEDULE_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      report_date: ${{ steps.report.outputs.report_date }}
+    env:
+      LIVE: ${{ github.event_name == 'schedule' || !inputs.demo }}
+      REPORT_DATE: ${{ inputs.report_date }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: 실제 수집은 main에서만 허용
+        shell: bash
+        run: |
+          if [[ "$LIVE" == 'true' && "$GITHUB_REF" != 'refs/heads/main' ]]; then
+            echo 'Live collection requires main.'
+            exit 1
+          fi
+      - name: AWS SDK 설치
+        if: env.LIVE == 'true'
+        run: python -m pip install -r monitoring/requirements.txt
+      - name: AWS 조회 역할 사용 (OIDC)
+        if: env.LIVE == 'true'
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ secrets.MONITORING_ROLE_ARN }}
+          aws-region: ${{ vars.MONITORING_AWS_REGION }}
+          role-session-name: monitoring-${{ github.run_id }}
+          mask-aws-account-id: true
+      - name: 공개 요약 생성
+        id: report
+        shell: bash
+        env:
+          MONITORING_CONFIG_JSON: ${{ env.LIVE == 'true' && secrets.MONITORING_CONFIG_JSON || '' }}
+          MONITORING_ALIAS_KEY: ${{ env.LIVE == 'true' && secrets.MONITORING_ALIAS_KEY || '' }}
+        run: |
+          args=(--output-dir "$RUNNER_TEMP/public-report")
+          if [[ "$LIVE" != 'true' ]]; then args+=(--demo); fi
+          if [[ -n "$REPORT_DATE" ]]; then args+=(--date "$REPORT_DATE"); fi
+          python monitoring/report.py "${args[@]}"
+      - name: 검증을 통과한 공개 Markdown만 보관
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: public-monitoring-report
+          path: ${{ runner.temp }}/public-report/**/*.md
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: collect
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      vars.MONITORING_PUBLICATION_ENABLED == 'true' &&
+      ((github.event_name == 'workflow_dispatch' && !inputs.demo && inputs.publish) ||
+      (github.event_name == 'schedule' && vars.MONITORING_SCHEDULE_ENABLED == 'true'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      REPORT_DATE: ${{ needs.collect.outputs.report_date }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: public-monitoring-report
+          path: ${{ runner.temp }}/public-report
+      - name: 생성한 날짜 파일 하나만 커밋
+        shell: bash
+        run: |
+          [[ "$REPORT_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || exit 1
+          relative="${REPORT_DATE:0:4}/${REPORT_DATE:5:2}/$REPORT_DATE.md"
+          source="$RUNNER_TEMP/public-report/$relative"
+          destination="monitoring/reports/$relative"
+          test -f "$source"
+          mkdir -p "$(dirname "$destination")"
+          cp -- "$source" "$destination"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "$destination"
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "docs: AWS daily monitoring $REPORT_DATE"
+          git push origin HEAD:main

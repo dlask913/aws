@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "targets": [
+    {"kind": "s3", "region": "ap-northeast-2", "id": "REPLACE_BUCKET_NAME"},
+    {"kind": "audit", "region": "ap-northeast-2", "id": "REPLACE_RESOURCE_ID", "resource_type": "AWS::EC2::Instance", "trail_lookup": "REPLACE_RESOURCE_ID"},
+    {"kind": "ec2", "region": "ap-northeast-2", "id": "REPLACE_INSTANCE_ID"},
+    {"kind": "rds_postgresql_logs", "region": "ap-northeast-2", "id": "/aws/rds/instance/REPLACE_DB_NAME/postgresql", "threshold_ms": 1000}
+  ]
+}
