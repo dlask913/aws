@@ -1,0 +1,64 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: GitHub Actions 일일 모니터링용 IAM 역할. 기존 GitHub OIDC 공급자를 재사용하고 서비스별 AWS 관리형 정책 4개를 연결합니다.
+
+Parameters:
+  MonitoringRoleName:
+    Type: String
+    Default: GitHubActionsMonitoringRole
+    Description: 새로 생성할 모니터링 역할 이름. 같은 계정에 동일한 이름의 역할이 없어야 합니다.
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '[A-Za-z0-9+=,.@_-]+'
+
+  GitHubOidcSubject:
+    Type: String
+    Default: repo:dlask913@79985588/aws@1314973119:ref:refs/heads/main
+    Description: 역할 사용을 허용할 GitHub OIDC subject. 기본값은 dlask913/aws의 main이며, 저장소의 실제 subject와 일치해야 합니다.
+    # 브랜치 기반 subject만 허용하며 와일드카드와 environment 형식은 허용하지 않습니다.
+    AllowedPattern: 'repo:[A-Za-z0-9_.@-]+/[A-Za-z0-9_.@-]+:ref:refs/heads/[A-Za-z0-9_./-]+'
+
+Resources:
+  GitHubMonitoringRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref MonitoringRoleName
+      # OIDC로 발급하는 임시 자격 증명의 최대 세션은 1시간입니다.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowGitHubBranchOidc
+            Effect: Allow
+            Principal:
+              # 배포 계정에 이미 등록된 공급자를 참조합니다. 공급자는 생성하지 않습니다.
+              Federated: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Ref GitHubOidcSubject
+
+      # 서비스별 관리형 정책은 특정 버킷·인스턴스·리전으로 제한된 정책이 아닙니다.
+      ManagedPolicyArns:
+        # S3 수명 주기·버전 설정 조회. 객체 내용 조회 권한도 포함합니다.
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonS3ReadOnlyAccess
+        # CPU·저장량 지표 및 CloudWatch Logs로 내보낸 RDS 로그 조회.
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/CloudWatchReadOnlyAccess
+        # Config 이력 조회. CloudTrail LookupEvents와 Config 스냅샷 전달 권한도 포함합니다.
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AWSConfigUserAccess
+        # EC2 적정 크기 권고 조회와 필요한 ec2:DescribeInstances 등을 포함합니다.
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/ComputeOptimizerReadOnlyAccess
+      Tags:
+        - Key: Purpose
+          Value: daily-monitoring
+
+Outputs:
+  MonitoringRoleArn:
+    Description: GitHub Actions Secret MONITORING_ROLE_ARN에 등록할 역할 ARN
+    Value: !GetAtt GitHubMonitoringRole.Arn
+  MonitoringRoleName:
+    Description: IAM 콘솔에서 확인할 역할 이름
+    Value: !Ref GitHubMonitoringRole
+  GitHubOidcSubject:
+    Description: 신뢰 정책에 적용된 GitHub OIDC subject
+    Value: !Ref GitHubOidcSubject

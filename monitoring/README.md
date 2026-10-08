@@ -28,6 +28,8 @@ monitoring/
   requirements.txt            # AWS SDK 의존성
   tests/test_report.py        # AWS 연결 없는 검증
   SETUP.ko.md                 # 실제 연결 및 실행 방법, 구현 경계
+  infra/github-monitoring-role.yaml # OIDC 수집 역할 및 관리형 정책 연결
+  infra/README.ko.md           # IAM 스택 배포·확인·삭제 방법
   samples/demo.md             # 실제 AWS 데이터가 아닌 예제
   reports/YYYY/MM/YYYY-MM-DD.md # 공개 요약 저장 경로
 ```
@@ -72,7 +74,7 @@ flowchart TD
     H --> I[공개 허용 필드만 monitoring/reports에 저장]
 ```
 
-- AWS 인증: 기존 배포 역할과 분리한 조회 전용 역할을 사용한다. OIDC 신뢰 조건은 `dlask913/aws`의 지정 실행 브랜치로 제한한다. 각 수집 API에 필요한 권한만 부여하고, 외부 기여자의 PR 코드를 AWS 인증 정보와 함께 실행하지 않는다.
+- AWS 인증: 기존 배포 역할과 분리한 모니터링 역할을 사용한다. OIDC 신뢰 조건은 `dlask913/aws`의 지정 실행 브랜치로 제한한다. 현재는 서비스별 AWS 관리형 정책 4개를 연결하는 절충안이며 API별 최소 권한보다 범위가 넓다. [IAM 스택 안내](infra/README.ko.md)에 권한 범위를 명시했다. 외부 기여자의 PR 코드를 AWS 인증 정보와 함께 실행하지 않는다.
 - GitHub 저장: 게시 단계에서만 저장소 `GITHUB_TOKEN`의 필요한 쓰기 권한을 사용한다. 명시적으로 지정한 공개 보고서 파일만 커밋한다. AWS 조회 권한과 GitHub 쓰기 권한은 별개다.
 - AWS 초기 설정: Config 기록 활성화, 로그 설정 등은 별도 설정 단계다. 일일 수집 역할에 변경 권한을 넣지 않는다.
 - 스케줄 예시: 매일 한국시간 09:17에 전날 00:00 이상~다음 날 00:00 미만을 집계한다. 해당 UTC cron 예시는 `17 0 * * *`이다. 시간은 아직 확정되지 않았다.

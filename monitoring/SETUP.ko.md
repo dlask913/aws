@@ -60,11 +60,15 @@ EC2 메모리 수집을 이미 사용한다면 `ec2` target에 다음 블록을 
 }
 ```
 
-## 4. 최소 조회 역할과 OIDC
+## 4. 서비스별 관리형 정책을 연결한 역할과 OIDC
 
-기존 배포 역할과 별도로 조회 역할을 만든다. 다음 표는 코드에서 사용하는 IAM action 목록이며 모든 권한을 `Resource: "*"`로 주는 정책 예제가 아니다.
+역할은 [CloudFormation 스택](infra/github-monitoring-role.yaml)으로 생성한다. [배포·확인·삭제 명령](infra/README.ko.md)에 따라 별도 IAM 스택으로 관리한다. 기존 GitHub OIDC 공급자를 재사용하며, 기본 역할 이름은 `GitHubActionsMonitoringRole`이다.
 
-| 수집 대상 | 필요한 IAM action | 리소스 범위 |
+현재 선택한 구성은 `AmazonS3ReadOnlyAccess`, `CloudWatchReadOnlyAccess`, `AWSConfigUserAccess`, `ComputeOptimizerReadOnlyAccess`의 4개 AWS 관리형 정책이다. `AWSConfigUserAccess`에 CloudTrail `LookupEvents`가 포함되어 별도 CloudTrail 정책은 추가하지 않는다. RDS 로그는 CloudWatch 정책으로 읽는다. 이 구성은 대상 리소스·리전을 제한하지 않으며, S3 객체 내용 조회와 Config 스냅샷 전달 등 수집기에서 사용하지 않는 권한도 포함한다.
+
+다음 표는 코드가 필요로 하는 API 권한과 향후 사용자 지정 정책으로 줄일 때의 제한 범위다. 위 관리형 정책이 아래 범위로 제한된다는 뜻은 아니다.
+
+| 수집 대상 | 필요한 IAM action | 사용자 지정 정책으로 전환할 때의 제한 범위 |
 | --- | --- | --- |
 | S3 설정 | `s3:GetLifecycleConfiguration`, `s3:GetBucketVersioning` | 선택한 버킷 ARN만 |
 | CloudWatch 지표 | `cloudwatch:GetMetricStatistics` | 해당 API는 `*`; 리전 조건 활용 |

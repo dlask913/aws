@@ -44,6 +44,10 @@ jobs:
           python-version: '3.12'
       - name: 분석 및 공개 경계 테스트 (AWS 인증 불필요)
         run: python -m unittest discover -s monitoring/tests -v
+      - name: CloudFormation 템플릿 정적 검사 (AWS 인증 불필요)
+        run: |
+          python -m pip install cfn-lint==1.40.2
+          cfn-lint -r ap-northeast-2 -t monitoring/infra/github-monitoring-role.yaml
 
   collect:
     needs: test
