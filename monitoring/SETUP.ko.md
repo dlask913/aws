@@ -70,12 +70,16 @@ EC2 메모리 수집을 이미 사용한다면 `ec2` target에 다음 블록을 
 | CloudWatch 지표 | `cloudwatch:GetMetricStatistics` | 해당 API는 `*`; 리전 조건 활용 |
 | Config | `config:DescribeConfigurationRecorderStatus`, `config:GetResourceConfigHistory` | 해당 API 권한 모델에 맞게 `*`, 조회 역할과 리전으로 제한 |
 | CloudTrail | `cloudtrail:LookupEvents` | `*`; 리전 조건 활용 |
-| Compute Optimizer | `compute-optimizer:GetEC2InstanceRecommendations` | `*`; 조회 계정·리전 제한 |
+| Compute Optimizer | `compute-optimizer:GetEC2InstanceRecommendations`, `ec2:DescribeInstances` | `*`; 조회 계정·리전 제한 |
 | RDS 로그 | `logs:FilterLogEvents` | 선택한 CloudWatch 로그 그룹 ARN만. 해당 API에 맞는 ARN 형식 확인 |
 
 `sts:GetCallerIdentity`는 현재 계정을 확인하는 데 사용하며 별도 허용 정책이 필요하지 않다. S3 객체 읽기, SQL 접속, Secrets Manager 조회, Config 활성화, EC2/RDS 변경 권한은 사용하지 않는다.
 
-OIDC 신뢰 정책은 provider `token.actions.githubusercontent.com`, audience `sts.amazonaws.com`, subject **`repo:dlask913/aws:ref:refs/heads/main`**으로 제한한다. 코드의 실제 수집도 main으로 제한한다. GitHub Environment를 추가하면 subject 형식이 바뀌므로 신뢰 정책도 함께 변경해야 한다.
+OIDC 신뢰 정책은 provider `token.actions.githubusercontent.com`, audience `sts.amazonaws.com`으로 설정하고, subject는 이 저장소의 main으로 제한한다. 이 저장소는 2026-07-28에 생성되었으며 GitHub의 새 기본 형식에 해당한다. 소유자 ID `79985588`, 저장소 ID `1314973119`를 확인했으므로 기본 subject는 **`repo:dlask913@79985588/aws@1314973119:ref:refs/heads/main`**이다. 앞선 이름만 있는 subject 예제는 정정한다. 사용자 지정 OIDC subject나 GitHub Environment를 사용하는 경우에는 실제 형식에 맞춰 신뢰 정책을 변경해야 한다. 코드의 실제 수집도 main으로 제한한다.
+
+Compute Optimizer 권고 조회는 서비스의 권한 매핑에 따라 `ec2:DescribeInstances`도 요구하므로 함께 부여한다. SDK에서 해당 EC2 API를 직접 호출하지 않더라도 필요한 권한이다.
+
+[GitHub immutable subject 형식](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims), [Compute Optimizer 권한 매핑](https://docs.aws.amazon.com/service-authorization/latest/reference/list_compute-optimizer.html)
 
 [GitHub AWS OIDC](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws), [STS GetCallerIdentity](https://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html)
 
