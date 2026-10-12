@@ -1,0 +1,11 @@
+# Terraform 설치·상태·계획 파일
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+
+# 로컬 입력값·오류 로그
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
