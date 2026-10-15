@@ -23,6 +23,16 @@ Parameters:
   BackendPrivateSubnet:
     Type: AWS::EC2::Subnet::Id
     Description: network output BackendPrivateSubnet (private)
+  BackendAppPort:
+    Type: Number
+    Default: 8081
+    MinValue: 1
+    MaxValue: 65535
+    Description: 백엔드 애플리케이션이 실제로 사용하는 HTTP 포트
+  CloudFrontPrefixListId:
+    Type: String
+    AllowedPattern: 'pl-[0-9a-f]+'
+    Description: 같은 리전의 AWS 관리형 com.amazonaws.global.cloudfront.origin-facing 접두사 목록 ID
 Resources:
   ArtifactBucket:
     Type: AWS::S3::Bucket
@@ -176,6 +186,24 @@ Resources:
           touch /opt/noticeboard-admin/bootstrap-complete
     Metadata:
       Comment: '초기 설정 완료 신호를 CloudFormation에 보내지 않으므로 스택 생성 완료만으로 초기 설정 성공을 판단하지 않고 배포 단계에서 cloud-init 상태와 완료 파일을 확인한다.'
+  BackendFromCloudFront:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref BackendSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref BackendAppPort
+      ToPort: !Ref BackendAppPort
+      SourcePrefixListId: !Ref CloudFrontPrefixListId
+      Description: Allow application traffic from CloudFront origin-facing servers
+  BackendVpcOrigin:
+    Type: AWS::CloudFront::VpcOrigin
+    DependsOn: BackendFromCloudFront
+    Properties:
+      VpcOriginEndpointConfig:
+        Name: !Sub '${AWS::StackName}-backend'
+        Arn: !Sub 'arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${BackendInstance}'
+        HTTPPort: !Ref BackendAppPort
+        OriginProtocolPolicy: http-only
   GitHubBackendPolicy:
     Type: AWS::IAM::Policy
     Properties:
@@ -216,3 +244,5 @@ Outputs:
       Fn::GetAtt:
         - BackendInstance
         - PrivateDnsName
+  BackendVpcOriginId:
+    Value: !GetAtt BackendVpcOrigin.Id

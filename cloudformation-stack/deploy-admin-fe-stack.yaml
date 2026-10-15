@@ -6,6 +6,14 @@ Parameters:
     Type: String
     Default: notice-admin-fe-dev
     Description: Name of the S3 bucket for frontend hosting
+  BackendPrivateDnsName:
+    Type: String
+    MinLength: 1
+    Description: BE 스택의 BackendPrivateDnsName 출력값으로 전달받는 백엔드 EC2의 프라이빗 DNS 이름
+  BackendVpcOriginId:
+    Type: String
+    MinLength: 1
+    Description: BE 스택에서 생성한 CloudFront VPC Origin의 ID. BackendVpcOriginId 출력값을 전달
 
 Resources:
   # 1. S3 버킷 생성 (완전 비공개)
@@ -42,6 +50,10 @@ Resources:
             OriginAccessControlId: !GetAtt CloudFrontOAC.Id
             S3OriginConfig:
               OriginAccessIdentity: ""
+          - Id: BackendOrigin
+            DomainName: !Ref BackendPrivateDnsName
+            VpcOriginConfig:
+              VpcOriginId: !Ref BackendVpcOriginId
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
@@ -55,6 +67,25 @@ Resources:
             QueryString: false
             Cookies:
               Forward: none
+        CacheBehaviors:
+          - PathPattern: '/api/*'
+            TargetOriginId: BackendOrigin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - POST
+              - PUT
+              - PATCH
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+            # AWS 관리형 CachingDisabled: API 응답 캐시 비활성화
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            # AWS 관리형 AllViewer: 헤더, 쿠키, 쿼리 문자열 전달
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
 
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
