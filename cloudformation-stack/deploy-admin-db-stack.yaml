@@ -37,14 +37,14 @@ Resources:
   DatabaseSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
-      DBSubnetGroupDescription: 서로 다른 가용 영역의 프라이빗 서브넷 두 개를 등록하며, DB 인스턴스는 한 가용 영역에만 배치
+      DBSubnetGroupDescription: Private subnets in two AZs for a single-AZ database
       SubnetIds:
         - Ref: DatabasePrivateSubnetA
         - Ref: DatabasePrivateSubnetB
   DatabaseParameters:
     Type: AWS::RDS::DBParameterGroup
     Properties:
-      Description: PostgreSQL 17 접속 시 TLS 암호화 통신을 요구하는 파라미터 그룹
+      Description: PostgreSQL 17 parameter group requiring TLS connections
       Family: postgres17
       Parameters:
         rds.force_ssl: '1'
