@@ -103,8 +103,8 @@ Resources:
   BackendSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      # 인바운드 접근은 허용하지 않으며 서버 관리와 배포는 SSM을 사용
-      GroupDescription: No inbound access. Admin and deployment through SSM.
+      # BE 스택이 CloudFront용 앱 포트 인바운드 규칙을 추가하며 서버 관리와 배포는 SSM을 사용
+      GroupDescription: Admin and deployment through SSM.
       VpcId:
         Ref: Vpc
       SecurityGroupEgress:
@@ -119,8 +119,8 @@ Resources:
         Ref: Vpc
       SecurityGroupIngress:
         - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
+          FromPort: 5432
+          ToPort: 5432
           SourceSecurityGroupId:
             Ref: BackendSecurityGroup
   SsmEndpointSecurityGroup:
